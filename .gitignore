@@ -1,0 +1,24 @@
+# Godot 4+ specific ignores
+.godot/
+/android/
+
+# Local NuGet cache
+.build/
+
+# Build output
+/build/
+
+# External user assets: never commit Skin/SFX or media files
+/Skin/
+/SFX/
+/assets/skins/
+/assets/skin/
+/assets/Skin/
+/assets/sfx/
+/assets/SFX/
+/assets/Sfx/
+*.wav
+*.mp3
+*.ogg
+*.flac
+*.mp4

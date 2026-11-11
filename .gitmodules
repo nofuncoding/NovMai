@@ -1,0 +1,3 @@
+[submodule "native/vendor/cimai"]
+	path = native/vendor/cimai
+	url = https://github.com/re-poem/cimai.git
