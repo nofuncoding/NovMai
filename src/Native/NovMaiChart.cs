@@ -223,48 +223,48 @@ public sealed unsafe class NovMaiChart : IDisposable
         for (var timingIndex = 0; timingIndex < timings.Length; timingIndex++)
         {
             var timing = timings[timingIndex];
-            if (bpm <= 0.0f && timing.bpm > 0.0f)
+            if (bpm <= 0.0f && timing.Bpm > 0.0f)
             {
-                bpm = timing.bpm;
+                bpm = timing.Bpm;
             }
-            duration = Math.Max(duration, timing.time + chartOffset);
+            duration = Math.Max(duration, timing.Time + chartOffset);
 
-            var first = (int)timing.notes_first;
-            var count = (int)timing.notes_count;
+            var first = (int)timing.NotesFirst;
+            var count = (int)timing.NotesCount;
             var end = Math.Min(first + count, nativeNotes.Length);
             for (var noteIndex = Math.Max(0, first); noteIndex < end; noteIndex++)
             {
                 var native = nativeNotes[noteIndex];
-                if (native.type == SimaiNoteType.NONE)
+                if (native.Type == SimaiNoteType.NONE)
                 {
                     continue;
                 }
 
-                var (area, position) = MapPosition(native.pos);
-                var kind = MapKind(native.type);
+                var (area, position) = MapPosition(native.StartPos);
+                var kind = MapKind(native.Type);
                 var endArea = NoteArea.None;
                 short endPosition = 0;
                 var slideShape = SlideShape.None;
 
                 if (kind == NoteKind.Slide)
                 {
-                    var partFirst = (int)native.slide_parts_first;
-                    var partCount = (int)native.slide_parts_count;
+                    var partFirst = (int)native.SlidePartsFirst;
+                    var partCount = (int)native.SlidePartsCount;
                     if (partCount > 0 && partFirst >= 0 && partFirst < slideParts.Length)
                     {
-                        slideShape = MapSlide(slideParts[partFirst].type);
+                        slideShape = MapSlide(slideParts[partFirst].Type);
                         var last = Math.Min(partFirst + partCount - 1, slideParts.Length - 1);
-                        (endArea, endPosition) = MapPosition(slideParts[last].end);
+                        (endArea, endPosition) = MapPosition(slideParts[last].End);
                     }
                 }
 
                 notes.Add(new NoteView
                 {
-                    Time = timing.time + chartOffset,
-                    Duration = native.duration,
-                    ShootDelay = native.slide_shoot_delay,
-                    HSpeed = timing.hspeed > 0.0f ? timing.hspeed : 1.0f,
-                    IsIgnoreSV = native.is_ignore_sv != 0,
+                    Time = timing.Time + chartOffset,
+                    Duration = native.Duration,
+                    ShootDelay = native.SlideShootDelay,
+                    HSpeed = timing.HSpeed > 0.0f ? timing.HSpeed : 1.0f,
+                    IsIgnoreSV = native.IsIgnoreSV,
                     Flags = BuildFlags(native),
                     SpanStart = 0,
                     SpanEnd = 0,
@@ -274,10 +274,10 @@ public sealed unsafe class NovMaiChart : IDisposable
                     Area = area,
                     SlideShape = slideShape,
                     SlideEndArea = endArea,
-                    IsEach = native.is_each != 0,
+                    IsEach = native.IsEach,
                 });
 
-                duration = Math.Max(duration, timing.time + chartOffset + Math.Max(0.0, native.duration));
+                duration = Math.Max(duration, timing.Time + chartOffset + Math.Max(0.0, native.Duration));
             }
         }
 
@@ -293,13 +293,13 @@ public sealed unsafe class NovMaiChart : IDisposable
     private static NoteFlags BuildFlags(SimaiNote note)
     {
         var flags = NoteFlags.None;
-        if (note.is_break != 0) flags |= NoteFlags.Break;
-        if (note.is_ex != 0) flags |= NoteFlags.Ex;
-        if (note.is_mine != 0) flags |= NoteFlags.Mine;
-        if (note.is_hanabi != 0) flags |= NoteFlags.Hanabi;
-        if (note.is_star != 0) flags |= NoteFlags.Star;
-        if (note.is_star_fake_rotate != 0) flags |= NoteFlags.StarFakeRotate;
-        if (note.is_slide_no_star_fade != 0) flags |= NoteFlags.SlideNoStarFade;
+        if (note.IsBreak) flags |= NoteFlags.Break;
+        if (note.IsEx) flags |= NoteFlags.Ex;
+        if (note.IsMine) flags |= NoteFlags.Mine;
+        if (note.IsHanabi) flags |= NoteFlags.Hanabi;
+        if (note.IsStar) flags |= NoteFlags.Star;
+        if (note.IsStarFakeRotate) flags |= NoteFlags.StarFakeRotate;
+        if (note.IsSlideNoStarFade) flags |= NoteFlags.SlideNoStarFade;
         return flags;
     }
 

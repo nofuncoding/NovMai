@@ -22,3 +22,8 @@
 *.ogg
 *.flac
 *.mp4
+
+# Editor
+.idea/
+.vscode/
+*.user

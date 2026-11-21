@@ -4,6 +4,7 @@ using Godot;
 using NovMai.Assets;
 using NovMai.Native;
 using NovMai.Preview;
+using NovMai.Rendering;
 
 public partial class Main : Node2D
 {
@@ -39,6 +40,17 @@ public partial class Main : Node2D
     public override void _Ready()
     {
         ExternalAssets.Initialize();
+        FFmpegVideoRuntime.Install();
+
+        // The headless FFmpeg probe runs in isolation: it does not need (or
+        // want) the chart/preview pipeline, which may pull in optional
+        // third-party natives.
+        if (FFmpegVideoSelfTest.TryGetRequestedPath(out var videoProbePath))
+        {
+            FFmpegVideoSelfTest.Run(this, videoProbePath);
+            return;
+        }
+
         var chartOverride = System.Environment.GetEnvironmentVariable("NOVMAI_CHART");
         if (!string.IsNullOrWhiteSpace(chartOverride))
         {
