@@ -1,4 +1,5 @@
 using System;
+using Chickensoft.Log;
 using Godot;
 
 namespace NovMai.Rendering;
@@ -18,6 +19,8 @@ namespace NovMai.Rendering;
 /// </summary>
 public partial class FFmpegVideoPlayback : VideoStreamPlayback
 {
+    private static readonly ILog Log = Logging.Get<FFmpegVideoPlayback>();
+
     private const double FrameAheadSeconds = 0.25;
     private const int VideoQueueTarget = 3;
     private const int AudioAheadFrames = 2048;
@@ -72,7 +75,7 @@ public partial class FFmpegVideoPlayback : VideoStreamPlayback
         }
         _texture = ImageTexture.CreateFromImage(_image);
 
-        GD.Print($"NovMai FFmpeg: opened {_path} ({_source.VideoWidth}x{_source.VideoHeight}, " +
+        Log.Print($"NovMai FFmpeg: opened {_path} ({_source.VideoWidth}x{_source.VideoHeight}, " +
                  $"{_duration:F2}s, {_source.FrameRate:F2} fps, " +
                  (_source.HasAudio ? $"{_source.AudioChannels}ch @ {_source.AudioSampleRate}Hz" : "no audio") + ")");
     }
@@ -172,7 +175,7 @@ public partial class FFmpegVideoPlayback : VideoStreamPlayback
         }
         catch (Exception error)
         {
-            GD.PushError($"NovMai FFmpeg: failed to switch audio track {idx} for {_path}: {error.Message}");
+            Log.Err($"NovMai FFmpeg: failed to switch audio track {idx} for {_path}: {error.Message}");
         }
     }
 
@@ -198,7 +201,7 @@ public partial class FFmpegVideoPlayback : VideoStreamPlayback
         }
         catch (Exception error)
         {
-            GD.PushError($"NovMai FFmpeg: seek to {time:F3}s failed for {_path}: {error.Message}");
+            Log.Err($"NovMai FFmpeg: seek to {time:F3}s failed for {_path}: {error.Message}");
         }
 
         _time = time;
@@ -225,7 +228,7 @@ public partial class FFmpegVideoPlayback : VideoStreamPlayback
         }
         catch (Exception error)
         {
-            GD.PushError($"NovMai FFmpeg: playback of {_path} failed: {error.Message}");
+            Log.Err($"NovMai FFmpeg: playback of {_path} failed: {error.Message}");
             _isPlaying = false;
             return;
         }

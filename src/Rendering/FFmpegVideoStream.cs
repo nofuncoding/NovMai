@@ -1,4 +1,5 @@
 using System;
+using Chickensoft.Log;
 using Godot;
 
 namespace NovMai.Rendering;
@@ -12,6 +13,8 @@ namespace NovMai.Rendering;
 [GlobalClass]
 public partial class FFmpegVideoStream : VideoStream
 {
+    private static readonly ILog Log = Logging.Get<FFmpegVideoStream>();
+
     /// <summary>Creates a stream for a <c>res://</c>, <c>user://</c> or absolute OS path.</summary>
     public static FFmpegVideoStream Create(string path)
     {
@@ -23,20 +26,20 @@ public partial class FFmpegVideoStream : VideoStream
         var path = File;
         if (string.IsNullOrEmpty(path))
         {
-            GD.PushError("FFmpegVideoStream: the 'file' property is empty.");
+            Log.Err("FFmpegVideoStream: the 'file' property is empty.");
             return null;
         }
 
         if (!FFmpegNative.IsAvailable && !FFmpegVideoRuntime.EnsureNative())
         {
-            GD.PushError($"FFmpegVideoStream: {FFmpegNative.Problem}");
+            Log.Err($"FFmpegVideoStream: {FFmpegNative.Problem}");
             return null;
         }
 
         var file = Godot.FileAccess.Open(path, Godot.FileAccess.ModeFlags.Read);
         if (file == null)
         {
-            GD.PushError($"FFmpegVideoStream: cannot open '{path}' ({Godot.FileAccess.GetOpenError()}).");
+            Log.Err($"FFmpegVideoStream: cannot open '{path}' ({Godot.FileAccess.GetOpenError()}).");
             return null;
         }
 
@@ -47,7 +50,7 @@ public partial class FFmpegVideoStream : VideoStream
         catch (Exception error)
         {
             file.Dispose();
-            GD.PushError($"FFmpegVideoStream: failed to open '{path}': {error.Message}");
+            Log.Err($"FFmpegVideoStream: failed to open '{path}': {error.Message}");
             return null;
         }
     }

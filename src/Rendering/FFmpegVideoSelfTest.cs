@@ -1,5 +1,6 @@
 using System;
 using System.Threading.Tasks;
+using Chickensoft.Log;
 using Godot;
 
 namespace NovMai.Rendering;
@@ -21,6 +22,8 @@ namespace NovMai.Rendering;
 /// </summary>
 public static class FFmpegVideoSelfTest
 {
+    private static readonly ILog Log = Logging.Get(nameof(FFmpegVideoSelfTest));
+
     private const string ProbeBusName = "FFmpegVideoProbe";
     private static AudioEffectCapture _capture;
 
@@ -43,17 +46,17 @@ public static class FFmpegVideoSelfTest
         }
         catch (Exception error)
         {
-            GD.PrintErr($"NovMai: ffmpeg video probe failed with an exception: {error}");
+            Log.Err($"NovMai: ffmpeg video probe failed with an exception: {error}");
             failures++;
         }
 
         if (failures == 0)
         {
-            GD.Print("NovMai: ffmpeg video probe ok");
+            Log.Print("NovMai: ffmpeg video probe ok");
         }
         else
         {
-            GD.Print($"NovMai: ffmpeg video probe failed: {failures} check(s) failed");
+            Log.Err($"NovMai: ffmpeg video probe failed: {failures} check(s) failed");
         }
         host.GetTree().Quit(failures == 0 ? 0 : 1);
     }
@@ -67,8 +70,8 @@ public static class FFmpegVideoSelfTest
             return failures + 1;
         }
 
-        GD.Print($"NovMai: ffmpeg video probe version = {FFmpegNative.Version}");
-        GD.Print($"NovMai: ffmpeg video probe root = '{(FFmpegNative.RootPath.Length == 0 ? "<system>" : FFmpegNative.RootPath)}'");
+        Log.Print($"NovMai: ffmpeg video probe version = {FFmpegNative.Version}");
+        Log.Print($"NovMai: ffmpeg video probe root = '{(FFmpegNative.RootPath.Length == 0 ? "<system>" : FFmpegNative.RootPath)}'");
 
         // 1. Decode through the low-level source first: codec/audio facts and
         //    the first frame are verified without involving the engine.
@@ -76,7 +79,7 @@ public static class FFmpegVideoSelfTest
         var hasAudio = media.HasAudio;
         try
         {
-            GD.Print($"NovMai: ffmpeg media probe {path}: {media.VideoWidth}x{media.VideoHeight}, " +
+            Log.Print($"NovMai: ffmpeg media probe {path}: {media.VideoWidth}x{media.VideoHeight}, " +
                      $"{media.Duration:F3}s @ {media.FrameRate:F2}fps, audio={media.HasAudio} " +
                      $"{media.AudioChannels}ch@{media.AudioSampleRate}Hz tracks={media.AudioTrackCount}");
             if (media.VideoWidth <= 0 || media.VideoHeight <= 0)
@@ -159,7 +162,7 @@ public static class FFmpegVideoSelfTest
             }
             var first = playback.GetCurrentFrameImage();
             var firstRange = first == null ? 0 : ByteRange(first.GetData(), first.GetWidth() * first.GetHeight() * 4);
-            GD.Print($"NovMai: ffmpeg playback frame range = {firstRange}");
+            Log.Print($"NovMai: ffmpeg playback frame range = {firstRange}");
             if (first == null || firstRange < 8)
             {
                 Fail("playback frame content", first == null ? "no image" : $"uniform pixels (range {firstRange})");
@@ -221,7 +224,7 @@ public static class FFmpegVideoSelfTest
         host.AddChild(player);
 
         var length = player.GetStreamLength();
-        GD.Print($"NovMai: ffmpeg {label} length = {length:F3}s");
+        Log.Print($"NovMai: ffmpeg {label} length = {length:F3}s");
         if (length <= 0.1)
         {
             Fail($"{label} length", $"{length:F3}s");
@@ -261,7 +264,7 @@ public static class FFmpegVideoSelfTest
             texture = player.GetVideoTexture();
             image = texture is ImageTexture firstTexture ? firstTexture.GetImage() : null;
             var range = image == null ? 0 : ByteRange(image.GetData(), image.GetWidth() * image.GetHeight() * 4);
-            GD.Print($"NovMai: ffmpeg {label} texture = {image?.GetWidth()}x{image?.GetHeight()} range={range}");
+            Log.Print($"NovMai: ffmpeg {label} texture = {image?.GetWidth()}x{image?.GetHeight()} range={range}");
             if (range < 8)
             {
                 Fail($"{label} texture", $"uniform pixels (range {range})");
@@ -281,7 +284,7 @@ public static class FFmpegVideoSelfTest
         }
         else
         {
-            GD.Print($"NovMai: ffmpeg {label} seek ok = {seeked:F3}s");
+            Log.Print($"NovMai: ffmpeg {label} seek ok = {seeked:F3}s");
         }
 
         // Pause must freeze the clock; unpause must resume it.
@@ -340,7 +343,7 @@ public static class FFmpegVideoSelfTest
         }
 
         var busPeak = AudioServer.GetBusPeakVolumeLeftDb(busIndex, 0);
-        GD.Print($"NovMai: ffmpeg {label} audio frames={framesAvailable} peak={peak:F4} busPeak={busPeak:F2}dB");
+        Log.Print($"NovMai: ffmpeg {label} audio frames={framesAvailable} peak={peak:F4} busPeak={busPeak:F2}dB");
         if (peak < 0.005f && busPeak < -60.0f)
         {
             Fail($"{label} audio", $"no audible PCM (peak {peak:F4}, bus {busPeak:F2}dB)");
@@ -405,6 +408,6 @@ public static class FFmpegVideoSelfTest
 
     private static void Fail(string check, string detail)
     {
-        GD.Print($"NovMai: ffmpeg video probe check failed [{check}] {detail}");
+        Log.Err($"NovMai: ffmpeg video probe check failed [{check}] {detail}");
     }
 }

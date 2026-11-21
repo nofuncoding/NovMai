@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using Chickensoft.Log;
 using Godot;
 
 namespace NovMai.Rendering;
@@ -17,6 +18,7 @@ namespace NovMai.Rendering;
 /// </summary>
 public static class FFmpegVideoRuntime
 {
+    private static readonly ILog Log = Logging.Get(nameof(FFmpegVideoRuntime));
     private static readonly object SyncRoot = new();
     private static FFmpegResourceFormatLoader _loader;
     private static bool _nativeReady;
@@ -51,7 +53,7 @@ public static class FFmpegVideoRuntime
                 _installed = true;
                 if (verbose)
                 {
-                    GD.Print("NovMai FFmpeg: video format loader registered (" +
+                    Log.Print("NovMai FFmpeg: video format loader registered (" +
                              string.Join(", ", FFmpegResourceFormatLoader.Extensions) + ").");
                 }
             }
@@ -97,14 +99,14 @@ public static class FFmpegVideoRuntime
             if (verbose)
             {
                 var origin = FFmpegNative.RootPath.Length == 0 ? "system loader path" : FFmpegNative.RootPath;
-                GD.Print($"NovMai FFmpeg: {FFmpegNative.Version} [{origin}]");
+                Log.Print($"NovMai FFmpeg: {FFmpegNative.Version} [{origin}]");
             }
             return true;
         }
 
         if (verbose)
         {
-            GD.PushError($"NovMai FFmpeg: {FFmpegNative.Problem}");
+            Log.Err($"NovMai FFmpeg: {FFmpegNative.Problem}");
         }
         return false;
     }

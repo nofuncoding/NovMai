@@ -209,6 +209,8 @@ packed into the PCK.
 - `src/Native/NovMaiChart.cs`: cimai-backed chart mapping to flat `NoteView` arrays.
 - `src/Native/NativeLibraryResolver.cs`: resolves cimai beside the executable.
 - `src/Assets/ExternalAssets.cs`: external Skin/SFX discovery and loaders.
+- `src/Logging.cs`: `Logging.Get<T>()` logger factory (Chickensoft.Log) used for
+  all game output; writes to the Godot console in every build type.
 - `src/Rendering/`: FFmpeg video format (`FFmpegVideoStream`,
   `FFmpegVideoPlayback`, `FFmpegResourceFormatLoader`, decoder core, native
   library loader and runtime installation).

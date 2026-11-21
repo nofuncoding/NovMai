@@ -1,3 +1,6 @@
 [submodule "native/vendor/cimai"]
 	path = native/vendor/cimai
 	url = https://github.com/re-poem/cimai.git
+[submodule "src/vendor/MajProtocol"]
+	path = src/vendor/MajProtocol
+	url = https://github.com/re-poem/MajProtocol.git

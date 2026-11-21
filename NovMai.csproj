@@ -17,9 +17,13 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="Chickensoft.GoDotTest" Version="2.0.52" />
+    <PackageReference Include="Chickensoft.Log" Version="2.0.0" />
+    <PackageReference Include="Chickensoft.Log.Godot" Version="1.0.107" />
     <PackageReference Include="Cimai" Version="1.1.1" />
     <PackageReference Include="FFmpeg.AutoGen" Version="9.0.1.1" />
     <PackageReference Include="Lingfeng-bbben.MajSimai" Version="3.0.1" />
     <PackageReference Include="MajProtocol.Standard" Version="2.0.1" />
+    <PackageReference Include="TeamMajdata.MajRadar" Version="0.2.0" />
   </ItemGroup>
 </Project>

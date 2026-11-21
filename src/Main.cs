@@ -1,6 +1,8 @@
 using System;
 using System.IO;
+using Chickensoft.Log;
 using Godot;
+using NovMai;
 using NovMai.Assets;
 using NovMai.Native;
 using NovMai.Preview;
@@ -8,6 +10,8 @@ using NovMai.Rendering;
 
 public partial class Main : Node2D
 {
+    private static readonly ILog Log = Logging.Get<Main>();
+
     [Export] public string ChartPath = "res://assets/charts/sample/maidata.txt";
     [Export] public int Difficulty = 0;
     [Export] public float AppearTime = 2.0f;
@@ -130,17 +134,17 @@ public partial class Main : Node2D
             SetupAudio();
             UpdateUi($"Loaded {Path.GetFileName(resolvedPath)} — {_notes.Length} notes, {_summary.Duration:F2}s, {_summary.Bpm:F2} BPM");
             UpdateHud();
-            GD.Print($"NovMai: loaded {resolvedPath} [diff {chosen}] ({_notes.Length} notes, {_summary.Duration:F3}s, {_summary.Bpm:F2} BPM)");
+            Log.Print($"NovMai: loaded {resolvedPath} [diff {chosen}] ({_notes.Length} notes, {_summary.Duration:F3}s, {_summary.Bpm:F2} BPM)");
             foreach (var diagnostic in _diagnostics)
             {
-                GD.Print($"NovMai diagnostic: {diagnostic.Message}");
+                Log.Print($"NovMai diagnostic: {diagnostic.Message}");
             }
         }
         catch (Exception error)
         {
             UpdateUi($"Load failed: {error.Message}");
             UpdateHud();
-            GD.PushError($"NovMai failed to load {path}: {error.Message}");
+            Log.Err($"NovMai failed to load {path}: {error.Message}");
         }
 
     }
@@ -276,7 +280,7 @@ public partial class Main : Node2D
             }
             catch (Exception error)
             {
-                GD.PushWarning($"NovMai: failed to load chart background {fullPath}: {error.Message}");
+                Log.Warn($"NovMai: failed to load chart background {fullPath}: {error.Message}");
             }
         }
     }
@@ -457,7 +461,7 @@ public partial class Main : Node2D
             var stream = ExternalAssets.TryLoadAudioFile(fullPath);
             if (stream != null)
             {
-                GD.Print($"NovMai: using chart audio {fullPath}");
+                Log.Print($"NovMai: using chart audio {fullPath}");
                 return stream;
             }
         }

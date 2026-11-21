@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using Chickensoft.Log;
 using Godot;
 
 namespace NovMai.Assets;
@@ -12,6 +13,7 @@ namespace NovMai.Assets;
 /// </summary>
 public static class ExternalAssets
 {
+    private static readonly ILog Log = Logging.Get(nameof(ExternalAssets));
     private static readonly List<string> SkinFiles = new();
     private static readonly List<string> SfxFiles = new();
 
@@ -32,17 +34,17 @@ public static class ExternalAssets
         Collect(SkinRoot, SkinFiles, ".png", ".jpg", ".jpeg", ".webp");
         Collect(SfxRoot, SfxFiles, ".wav", ".ogg", ".mp3");
 
-        GD.Print($"NovMai: external asset root = {Root}");
-        GD.Print($"NovMai: Skin = {SkinRoot} ({SkinFiles.Count} files)");
-        GD.Print($"NovMai: SFX  = {SfxRoot} ({SfxFiles.Count} files)");
+        Log.Print($"NovMai: external asset root = {Root}");
+        Log.Print($"NovMai: Skin = {SkinRoot} ({SkinFiles.Count} files)");
+        Log.Print($"NovMai: SFX  = {SfxRoot} ({SfxFiles.Count} files)");
 
         if (SkinFiles.Count == 0)
         {
-            GD.Print("NovMai: no external Skin files found; using built-in vector visuals.");
+            Log.Print("NovMai: no external Skin files found; using built-in vector visuals.");
         }
         if (SfxFiles.Count == 0)
         {
-            GD.Print("NovMai: no external SFX files found; using the generated metronome.");
+            Log.Print("NovMai: no external SFX files found; using the generated metronome.");
         }
 
         ProbeFirst();
@@ -60,14 +62,14 @@ public static class ExternalAssets
             using var image = Image.LoadFromFile(fullPath);
             if (image == null || image.IsEmpty())
             {
-                GD.PushWarning($"NovMai: could not decode skin image: {fullPath}");
+                Log.Warn($"NovMai: could not decode skin image: {fullPath}");
                 return null;
             }
             return ImageTexture.CreateFromImage(image);
         }
         catch (Exception error)
         {
-            GD.PushWarning($"NovMai: failed to load skin image {fullPath}: {error.Message}");
+            Log.Warn($"NovMai: failed to load skin image {fullPath}: {error.Message}");
             return null;
         }
     }
@@ -131,7 +133,7 @@ public static class ExternalAssets
         }
         catch (Exception error)
         {
-            GD.PushWarning($"NovMai: failed to load audio {fullPath}: {error.Message}");
+            Log.Warn($"NovMai: failed to load audio {fullPath}: {error.Message}");
             return null;
         }
     }
@@ -142,7 +144,7 @@ public static class ExternalAssets
         {
             var relative = Path.GetRelativePath(SkinRoot, SkinFiles[0]);
             var texture = TryLoadTexture(relative);
-            GD.Print(texture == null
+            Log.Print(texture == null
                 ? $"NovMai: skin loader probe failed for {relative}"
                 : $"NovMai: skin loader probe ok for {relative}");
         }
@@ -151,7 +153,7 @@ public static class ExternalAssets
         {
             var relative = Path.GetRelativePath(SfxRoot, SfxFiles[0]);
             var audio = TryLoadAudio(relative);
-            GD.Print(audio == null
+            Log.Print(audio == null
                 ? $"NovMai: SFX loader probe failed for {relative}"
                 : $"NovMai: SFX loader probe ok for {relative}");
         }
