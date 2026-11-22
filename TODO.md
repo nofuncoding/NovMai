@@ -35,6 +35,11 @@
   - [ ] Wait is that a controller?
   - [ ] No, I won't implement features above.
 
+- [ ] Performance
+  - [ ] Batching for sprites (Multimesh / RenderingServer)
+  - [ ] Hardware-accelerated FFmpeg playing
+  - [ ] Multi-threading resource loading
+
 ## Editor
 
 - [ ] flexible layout
