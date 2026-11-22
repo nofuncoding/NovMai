@@ -111,13 +111,31 @@ player.Play();
 Decoding is software-only on the main thread: it is sized for background
 videos, not 4K feature playback.
 
-Pausing the running project from the editor (or any breakpoint/GC stall)
-suspends the main loop while Godot's audio thread keeps mixing, which would
-leave the picture behind the sound after resuming. The playback pushes at most
-a small amount of audio ahead of the video clock and, after detecting such a
-stall, advances the video clock by the audio that was already played. The
-correction is bounded by the audio lead (about 200 ms), so the picture may jump
-slightly forward on resume but stays in sync.
+The picture follows the audio-server mix clock: an `AudioEffectCapture` on the
+master bus counts the frames Godot's audio thread actually mixes, and the video
+clock is derived from that count. This keeps the picture locked to the sound
+when the game runs slowly (the engine clamps its process delta), when the audio
+thread is delayed, and after an editor pause/breakpoint (the audio timeline
+keeps running while the main thread is suspended, and the picture catches up
+with it). Pushing PCM is also budgeted against that clock, so the player's
+resampler cannot accumulate a growing backlog. If the audio clock cannot be
+attached (missing bus or read failure) the playback falls back to a wall clock
+with a bounded audio lead. If the audio-server clock stops advancing for two
+seconds (driver paused or device unplugged) it also falls back to the wall
+clock. Frames skipped because the main loop runs below the video frame rate are
+discarded without RGBA conversion.
+
+The picture is also delayed by the measured audio output latency
+(`AudioServer.GetOutputLatency()`, about 40-50 ms here) so it matches what is
+actually heard instead of running ahead of the sound. Tune or disable it with
+`NOVMAI_FFMPEG_AUDIO_LATENCY_MS` (milliseconds, `0` disables) or the
+`audio/video/ffmpeg_audio_latency_ms` project setting (`-1` = automatic).
+
+Set `NOVMAI_VIDEO_DEBUG=1` to log playback statistics every two seconds
+(fps, average delta/wall gap, dropped frames, audio clock source, mixed time,
+audio lead and latency). The wall-clock fallback can be disabled with
+`NOVMAI_FFMPEG_STALL_RESYNC=0` (or the `audio/video/ffmpeg_stall_resync`
+project setting).
 
 Development check:
 
@@ -129,11 +147,13 @@ This generates H.264/AAC MP4 and VP9/Opus WebM fixtures (plus a longer clip for
 the stall probe) with the system `ffmpeg`, then runs the game headless through
 `NOVMAI_VIDEO_SELFTEST` and checks decoding through both `FFmpegVideoStream`
 and the registered loader, including texture pixels, seeking, pausing, audio
-reaching an `AudioEffectCapture` bus, script instantiation, and audio/video
-resynchronisation after a simulated main-thread stall. Optional environment
-variables: `NOVMAI_VIDEO_SELFTEST_EXPECT_SECONDS`, `NOVMAI_VIDEO_LOADER_TEST`
-(`res://` path) and `NOVMAI_VIDEO_STALL_PROBE=1` (enables the stall/resync
-check, used by the longer fixture run).
+reaching an `AudioEffectCapture` bus, script instantiation, audio/video
+synchronisation across a simulated main-thread suspension (the picture clock
+must follow the audio timeline), and that ordinary slow frames keep the clock
+on that timeline. Optional environment variables:
+`NOVMAI_VIDEO_SELFTEST_EXPECT_SECONDS`, `NOVMAI_VIDEO_LOADER_TEST` (`res://`
+path), `NOVMAI_VIDEO_STALL_PROBE=1` and `NOVMAI_VIDEO_SLOW_FRAME_PROBE=1`
+(enable the stall/resync and slow-frame probes used by the longer fixture runs).
 
 ## Package
 

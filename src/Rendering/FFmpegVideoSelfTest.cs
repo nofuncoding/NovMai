@@ -20,7 +20,10 @@ namespace NovMai.Rendering;
 ///     <see cref="FFmpegResourceFormatLoader"/>.</item>
 ///   <item><c>NOVMAI_VIDEO_STALL_PROBE=1</c>: blocks the main thread during
 ///     playback (simulating an editor pause/breakpoint) and verifies that the
-///     picture is resynchronised to the audio that played while suspended.</item>
+///     picture clock catches up with the audio timeline.</item>
+///   <item><c>NOVMAI_VIDEO_SLOW_FRAME_PROBE=1</c>: simulates heavy 160 ms frames
+///     and verifies that the picture clock still follows the audio timeline
+///     instead of falling into slow motion.</item>
 /// </list>
 /// </summary>
 public static class FFmpegVideoSelfTest
@@ -240,7 +243,7 @@ public static class FFmpegVideoSelfTest
         }
 
         player.Play();
-        await Frames(host, 20);
+        await WaitSeconds(host, 0.4);
 
         if (!player.IsPlaying())
         {
@@ -278,7 +281,7 @@ public static class FFmpegVideoSelfTest
         // Seek to the middle and confirm the reported position follows.
         var target = Math.Max(0.2, length * 0.5);
         player.StreamPosition = target;
-        await Frames(host, 6);
+        await WaitSeconds(host, 0.15);
         var seeked = player.GetStreamPosition();
         if (Math.Abs(seeked - target) > 0.4)
         {
@@ -292,9 +295,9 @@ public static class FFmpegVideoSelfTest
 
         // Pause must freeze the clock; unpause must resume it.
         player.Paused = true;
-        await Frames(host, 4);
+        await WaitSeconds(host, 0.2);
         var pausedAt = player.GetStreamPosition();
-        await Frames(host, 6);
+        await WaitSeconds(host, 0.3);
         var stillPausedAt = player.GetStreamPosition();
         if (Math.Abs(stillPausedAt - pausedAt) > 0.05)
         {
@@ -302,7 +305,7 @@ public static class FFmpegVideoSelfTest
             failures++;
         }
         player.Paused = false;
-        await Frames(host, 6);
+        await WaitSeconds(host, 0.3);
         var resumedAt = player.GetStreamPosition();
         if (resumedAt <= stillPausedAt)
         {
@@ -319,6 +322,12 @@ public static class FFmpegVideoSelfTest
             System.Environment.GetEnvironmentVariable("NOVMAI_VIDEO_STALL_PROBE") == "1")
         {
             failures += await ProbeExternalStall(host, player, label);
+        }
+
+        if (expectAudio && label == "direct stream" &&
+            System.Environment.GetEnvironmentVariable("NOVMAI_VIDEO_SLOW_FRAME_PROBE") == "1")
+        {
+            failures += await ProbeSlowFrames(host, player, label);
         }
 
         player.Stop();
@@ -339,23 +348,23 @@ public static class FFmpegVideoSelfTest
             return 0;
         }
 
+        await WaitSeconds(host, 0.3);
         var mixRate = Math.Max(1, AudioServer.GetMixRate());
         _capture.ClearBuffer();
         var positionBefore = player.GetStreamPosition();
         var usecBefore = Time.GetTicksUsec();
 
+        // Simulate an editor pause/breakpoint: the main thread blocks while the
+        // audio thread keeps mixing (and the audio-server clock keeps running).
         System.Threading.Thread.Sleep(1200);
 
-        var usecAfterSleep = Time.GetTicksUsec();
-        await Frames(host, 1);
+        var sleepSeconds = (Time.GetTicksUsec() - usecBefore) / 1_000_000.0;
+        await WaitSeconds(host, 0.1);
         var positionAfter = player.GetStreamPosition();
+        var advanced = positionAfter - positionBefore;
 
         var capturedFrames = _capture.GetFramesAvailable();
         var buffer = capturedFrames > 0 ? _capture.GetBuffer(capturedFrames) : Array.Empty<Vector2>();
-
-        // The audio thread keeps mixing during the stall, but emits silence once
-        // the player's resampler is drained. Measure the audible prefix up to the
-        // first sustained silence; later non-silent audio is post-resume playback.
         var mixRateF = Math.Max(1, mixRate);
         const int silenceWindow = 512;
         var silentRun = 0;
@@ -381,31 +390,55 @@ public static class FFmpegVideoSelfTest
         }
 
         var leakedSeconds = audibleFrames / (double)mixRateF;
-        var postResumeSeconds = (Time.GetTicksUsec() - usecAfterSleep) / 1_000_000.0;
-        var wallSeconds = (Time.GetTicksUsec() - usecBefore) / 1_000_000.0;
-        var advanced = positionAfter - positionBefore;
-        var syncError = advanced - leakedSeconds - postResumeSeconds;
         GD.Print($"NovMai: ffmpeg {label} stall probe: advanced={advanced:F3}s leaked={leakedSeconds:F3}s " +
-                 $"postResume={postResumeSeconds:F3}s syncError={syncError * 1000.0:F0}ms " +
-                 $"peak={peak:F3} wall={wallSeconds:F3}s " +
-                 $"sleep={((usecAfterSleep - usecBefore) / 1_000_000.0):F3}s frames={capturedFrames}");
+                 $"peak={peak:F3} sleep={sleepSeconds:F3}s frames={capturedFrames}");
 
         var failures = 0;
-        if (leakedSeconds < 0.05)
+        // The picture must jump forward with the audio timeline over the
+        // suspension (the old wall-clock code only advanced by the audio that
+        // leaked out of the player's resampler).
+        if (advanced < sleepSeconds * 0.6 || advanced > sleepSeconds * 1.5 + 0.25)
         {
-            Fail($"{label} stall audio leak", $"expected buffered audio to drain during the stall, got {leakedSeconds:F3}s");
+            Fail($"{label} stall clock", $"video advanced {advanced:F3}s over a {sleepSeconds:F3}s suspension");
             failures++;
         }
 
-        // After resuming, the video clock should have advanced by the audio that
-        // played during the suspension plus the normal frame delta. Without the
-        // resync it only advances by the latter, leaving the picture behind.
-        if (Math.Abs(syncError) > 0.12)
+        return failures;
+    }
+
+    /// <summary>
+    /// Simulates a main loop that runs well below 60 fps (160 ms frames) without
+    /// any engine-delta correction, as happens when the game scene is heavy. Such
+    /// frames are not a suspension: the playback must not move the video clock.
+    /// </summary>
+    private static async Task<int> ProbeSlowFrames(Node host, VideoStreamPlayer player, string label)
+    {
+        var resyncsBefore = FFmpegVideoPlayback.ResyncCount;
+        var positionBefore = player.GetStreamPosition();
+        var usecBefore = Time.GetTicksUsec();
+        for (var frame = 0; frame < 10; frame++)
         {
-            Fail($"{label} stall resync", $"video advanced {advanced:F3}s vs {leakedSeconds:F3}s leaked audio (+{postResumeSeconds:F3}s normal), sync error {syncError * 1000.0:F0}ms");
-            failures++;
+            System.Threading.Thread.Sleep(160);
+            await WaitSeconds(host, 0.01);
         }
 
+        var corrections = FFmpegVideoPlayback.ResyncCount - resyncsBefore;
+        var advanced = player.GetStreamPosition() - positionBefore;
+        var wallSeconds = (Time.GetTicksUsec() - usecBefore) / 1_000_000.0;
+        GD.Print($"NovMai: ffmpeg {label} slow-frame probe: advanced={advanced:F3}s wall={wallSeconds:F3}s " +
+                 $"resyncs={corrections}");
+
+        var failures = 0;
+        if (corrections > 0)
+        {
+            Fail($"{label} slow-frame resync", $"ordinary slow frames triggered {corrections} resync correction(s)");
+            failures++;
+        }
+        if (advanced < wallSeconds * 0.5)
+        {
+            Fail($"{label} slow-frame clock", $"video clock advanced only {advanced:F3}s in {wallSeconds:F3}s");
+            failures++;
+        }
         return failures;
     }
 
@@ -423,7 +456,7 @@ public static class FFmpegVideoSelfTest
         }
 
         _capture.ClearBuffer();
-        await Frames(host, 20);
+        await WaitSeconds(host, 0.3);
 
         var framesAvailable = _capture.GetFramesAvailable();
         var buffer = framesAvailable > 0 ? _capture.GetBuffer(Math.Min(framesAvailable, 8192)) : Array.Empty<Vector2>();
@@ -470,6 +503,13 @@ public static class FFmpegVideoSelfTest
         {
             await host.ToSignal(tree, SceneTree.SignalName.ProcessFrame);
         }
+    }
+
+    /// <summary>Waits in real time (the audio-server clock advances with wall time).</summary>
+    private static async Task WaitSeconds(Node host, double seconds)
+    {
+        var timer = host.GetTree().CreateTimer(seconds);
+        await host.ToSignal(timer, SceneTreeTimer.SignalName.Timeout);
     }
 
     private static double ReadExpectedSeconds()

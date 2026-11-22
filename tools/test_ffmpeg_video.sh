@@ -91,7 +91,8 @@ run_probe() {
   NOVMAI_VIDEO_LOADER_TEST="$loader_path" \
   NOVMAI_VIDEO_SELFTEST_EXPECT_SECONDS="$expected" \
   NOVMAI_VIDEO_STALL_PROBE="${stall_probe:-0}" \
-  timeout 120 "$godot" --headless --path "$root" --quit-after 2400 2>&1 | tee "$log"
+  NOVMAI_VIDEO_SLOW_FRAME_PROBE="${slow_probe:-0}" \
+  timeout 180 "$godot" --headless --path "$root" --quit-after 300000 2>&1 | tee "$log"
   local status=${PIPESTATUS[0]}
   set -e
 
@@ -106,6 +107,12 @@ run_probe() {
   if grep -q "ffmpeg video probe check failed\|ffmpeg video probe failed" "$log"; then
     echo "FAILED: check failures reported for $label (log: $log)" >&2
     exit 1
+  fi
+  if [[ "${stall_probe:-0}" == "1" ]]; then
+    if ! grep -q "stall probe" "$log"; then
+      echo "FAILED: simulated suspension probe did not run (log: $log)" >&2
+      exit 1
+    fi
   fi
 }
 
@@ -150,5 +157,11 @@ stall_probe=1
 run_probe "h264_aac_stall_resync" "$stall_fixture" "res://assets/charts/sample/__ffmpeg_video_stall_probe.mp4" "20"
 stall_probe=0
 
+# Heavy frames (like a loaded game scene) are not a suspension: the video clock
+# must not jump for ordinary slow frames.
+slow_probe=1
+run_probe "h264_aac_slow_frames" "$stall_fixture" "res://assets/charts/sample/__ffmpeg_video_stall_probe.mp4" "20"
+slow_probe=0
+
 echo
-echo "OK: FFmpeg video format probe passed (MP4/H.264+AAC, WebM/VP9+Opus and stall resync)."
+echo "OK: FFmpeg video format probe passed (MP4/H.264+AAC, WebM/VP9+Opus, stall resync and slow-frame gating)."

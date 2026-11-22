@@ -54,6 +54,7 @@ public sealed unsafe class FFmpegMediaSource : IDisposable
     private int _audioStreamIndex = -1;
     private double _audioDiscardUntil = double.NegativeInfinity;
 
+    private double _newestVideoTime = double.NegativeInfinity;
     private bool _demuxEof;
     private bool _audioEof;
     private bool _disposed;
@@ -79,6 +80,9 @@ public sealed unsafe class FFmpegMediaSource : IDisposable
     public double LastVideoTime { get; private set; }
     public bool IsDemuxEof => _demuxEof;
     public int VideoQueueCount => _videoFrames.Count + (_pendingVideoFrame != null ? 1 : 0);
+
+    /// <summary>Presentation time of the newest decoded frame that has been queued.</summary>
+    public double NewestVideoTime => _newestVideoTime;
 
     /// <summary>Duration to play; falls back to the last decoded frame when the container has no duration.</summary>
     public double EndTime => Duration > 0.0 ? Duration : Math.Max(0.0, LastVideoTime + 0.1);
@@ -496,6 +500,11 @@ public sealed unsafe class FFmpegMediaSource : IDisposable
                     throw new FFmpegException(referenceResult, "av_frame_ref");
                 }
                 _videoFrames.Enqueue((IntPtr)copy);
+                var queuedTime = FrameSeconds(copy, _videoTimeBase, _videoStartTime);
+                if (!double.IsNaN(queuedTime))
+                {
+                    _newestVideoTime = Math.Max(_newestVideoTime, queuedTime);
+                }
                 continue;
             }
 
@@ -555,6 +564,83 @@ public sealed unsafe class FFmpegMediaSource : IDisposable
             return false;
         }
         time = FrameSeconds((AVFrame*)_videoFrames.Peek(), _videoTimeBase, _videoStartTime);
+        return true;
+    }
+
+    /// <summary>
+    /// Frees decoded frames that are already due while a later due frame exists,
+    /// so a catch-up update only converts/uploads the newest due frame. Returns
+    /// the number of dropped frames.
+    /// </summary>
+    public int DropVideoFramesBefore(double deadline)
+    {
+        ThrowIfDisposed();
+        var dropped = 0;
+        while (TryPeekSecondVideoTime(out var second) && second <= deadline)
+        {
+            if (!TryDropVideo(out _))
+            {
+                break;
+            }
+            dropped++;
+        }
+        return dropped;
+    }
+
+    private bool TryPeekSecondVideoTime(out double time)
+    {
+        AVFrame* frame = null;
+        if (_pendingVideoFrame != null)
+        {
+            if (_videoFrames.Count == 0)
+            {
+                time = 0.0;
+                return false;
+            }
+            frame = (AVFrame*)_videoFrames.Peek();
+        }
+        else
+        {
+            if (_videoFrames.Count < 2)
+            {
+                time = 0.0;
+                return false;
+            }
+            var enumerator = _videoFrames.GetEnumerator();
+            enumerator.MoveNext();
+            enumerator.MoveNext();
+            frame = (AVFrame*)enumerator.Current;
+        }
+
+        time = FrameSeconds(frame, _videoTimeBase, _videoStartTime);
+        return !double.IsNaN(time);
+    }
+
+    private bool TryDropVideo(out double time)
+    {
+        AVFrame* frame = null;
+        if (_pendingVideoFrame != null)
+        {
+            frame = _pendingVideoFrame;
+            _pendingVideoFrame = null;
+        }
+        else if (_videoFrames.Count > 0)
+        {
+            frame = (AVFrame*)_videoFrames.Dequeue();
+        }
+
+        if (frame == null)
+        {
+            time = 0.0;
+            return false;
+        }
+
+        time = FrameSeconds(frame, _videoTimeBase, _videoStartTime);
+        if (!double.IsNaN(time))
+        {
+            LastVideoTime = Math.Max(LastVideoTime, time);
+        }
+        ffmpeg.av_frame_free(&frame);
         return true;
     }
 
@@ -892,6 +978,7 @@ public sealed unsafe class FFmpegMediaSource : IDisposable
         }
         _audioRead = 0;
         _audioCount = 0;
+        _newestVideoTime = double.NegativeInfinity;
     }
 
     private static double FrameSeconds(AVFrame* frame, double timeBase, double startTime)
