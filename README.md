@@ -111,19 +111,29 @@ player.Play();
 Decoding is software-only on the main thread: it is sized for background
 videos, not 4K feature playback.
 
+Pausing the running project from the editor (or any breakpoint/GC stall)
+suspends the main loop while Godot's audio thread keeps mixing, which would
+leave the picture behind the sound after resuming. The playback pushes at most
+a small amount of audio ahead of the video clock and, after detecting such a
+stall, advances the video clock by the audio that was already played. The
+correction is bounded by the audio lead (about 200 ms), so the picture may jump
+slightly forward on resume but stays in sync.
+
 Development check:
 
 ```sh
 GODOT_BIN=/path/to/Godot_v4.7.2-stable_mono_linux.x86_64 just verify-video
 ```
 
-This generates H.264/AAC MP4 and VP9/Opus WebM fixtures with the system
-`ffmpeg`, then runs the game headless through `NOVMAI_VIDEO_SELFTEST` and
-checks decoding through both `FFmpegVideoStream` and the registered loader,
-including texture pixels, seeking, pausing, and audio reaching an
-`AudioEffectCapture` bus. Optional environment variables:
-`NOVMAI_VIDEO_SELFTEST_EXPECT_SECONDS` and `NOVMAI_VIDEO_LOADER_TEST`
-(`res://` path).
+This generates H.264/AAC MP4 and VP9/Opus WebM fixtures (plus a longer clip for
+the stall probe) with the system `ffmpeg`, then runs the game headless through
+`NOVMAI_VIDEO_SELFTEST` and checks decoding through both `FFmpegVideoStream`
+and the registered loader, including texture pixels, seeking, pausing, audio
+reaching an `AudioEffectCapture` bus, script instantiation, and audio/video
+resynchronisation after a simulated main-thread stall. Optional environment
+variables: `NOVMAI_VIDEO_SELFTEST_EXPECT_SECONDS`, `NOVMAI_VIDEO_LOADER_TEST`
+(`res://` path) and `NOVMAI_VIDEO_STALL_PROBE=1` (enables the stall/resync
+check, used by the longer fixture run).
 
 ## Package
 

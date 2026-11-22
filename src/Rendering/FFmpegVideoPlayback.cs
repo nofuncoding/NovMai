@@ -21,9 +21,16 @@ public partial class FFmpegVideoPlayback : VideoStreamPlayback
 {
     private static readonly ILog Log = Logging.Get<FFmpegVideoPlayback>();
 
-    private const double FrameAheadSeconds = 0.25;
     private const int VideoQueueTarget = 3;
     private const int AudioAheadFrames = 2048;
+
+    // Audio is pushed at most this far ahead of the video clock. A small lead
+    // keeps the player's resampler fed without buffering an audible backlog
+    // that would keep playing if the main thread is suspended (editor pause,
+    // breakpoint, GC hitch).
+    private const double InitialAudioLeadSeconds = 0.2;
+    private const double MaxAudioLeadSeconds = 0.5;
+    private const double ExternalStallThresholdSeconds = 0.15;
 
     private FFmpegMediaSource _source;
     private string _path = string.Empty;
@@ -34,6 +41,9 @@ public partial class FFmpegVideoPlayback : VideoStreamPlayback
     private double _time;
     private double _delayCompensation;
     private double _duration;
+    private double _audioLeadSeconds = InitialAudioLeadSeconds;
+    private double _audioContentTime;
+    private ulong _lastUpdateUsec;
     private bool _isPlaying;
     private bool _paused;
     private bool _finished;
@@ -145,9 +155,12 @@ public partial class FFmpegVideoPlayback : VideoStreamPlayback
         {
             _source.Seek(0.0);
             _time = 0.0;
+            _audioContentTime = 0.0;
             _finished = false;
         }
 
+        _lastUpdateUsec = 0;
+        _audioLeadSeconds = InitialAudioLeadSeconds;
         _delayCompensation = ReadDelayCompensation();
         _isPlaying = true;
     }
@@ -162,12 +175,22 @@ public partial class FFmpegVideoPlayback : VideoStreamPlayback
         _isPlaying = false;
         _finished = false;
         _time = 0.0;
+        _audioContentTime = 0.0;
+        _lastUpdateUsec = 0;
+        _audioLeadSeconds = InitialAudioLeadSeconds;
         _source?.Seek(0.0);
     }
 
     public override void _SetPaused(bool paused)
     {
         _paused = paused;
+        if (!paused)
+        {
+            // A tree pause pauses the audio path as well (VideoStreamPlayer skips
+            // its mix callback while the playback is paused), so the wall-clock
+            // gap must not be treated as leaked audio.
+            _lastUpdateUsec = Time.GetTicksUsec();
+        }
     }
 
     public override void _SetAudioTrack(int idx)
@@ -183,6 +206,10 @@ public partial class FFmpegVideoPlayback : VideoStreamPlayback
             if (_source.HasAudio)
             {
                 _pushBuffer = new float[AudioAheadFrames * _source.AudioChannels];
+                // The decoder ring was reset for the new track: restart the audio
+                // clock at the current video position.
+                _audioContentTime = _time;
+                _audioLeadSeconds = InitialAudioLeadSeconds;
             }
         }
         catch (Exception error)
@@ -217,6 +244,8 @@ public partial class FFmpegVideoPlayback : VideoStreamPlayback
         }
 
         _time = time;
+        _audioContentTime = time;
+        _lastUpdateUsec = Time.GetTicksUsec();
         _finished = false;
         PresentDueFrames();
         PushAudio();
@@ -229,7 +258,13 @@ public partial class FFmpegVideoPlayback : VideoStreamPlayback
             return;
         }
 
-        _time += Math.Max(0.0, delta);
+        var nowUsec = Time.GetTicksUsec();
+        var wallGap = _lastUpdateUsec == 0 ? 0.0 : (nowUsec - _lastUpdateUsec) / 1_000_000.0;
+        _lastUpdateUsec = nowUsec;
+
+        var step = Math.Max(0.0, delta);
+        _time += step;
+        ResyncAfterExternalStall(wallGap, step);
         var compensationTime = _time - _delayCompensation;
 
         try
@@ -295,47 +330,113 @@ public partial class FFmpegVideoPlayback : VideoStreamPlayback
         }
     }
 
-    private void PushAudio()
+    /// <summary>
+    /// Pushes decoded PCM through the player's mix callback while keeping the
+    /// audio content at most <see cref="_audioLeadSeconds"/> ahead of the video
+    /// clock. Returns the number of frames accepted by the resampler.
+    /// </summary>
+    private int PushAudio()
     {
         if (!_source.HasAudio || _source.AudioChannels <= 0)
         {
-            return;
+            return 0;
         }
 
         var channels = _source.AudioChannels;
-        for (var iteration = 0; iteration < 4; iteration++)
+        var rate = Math.Max(1, _source.AudioSampleRate);
+        var totalAccepted = 0;
+
+        for (var iteration = 0; iteration < 8; iteration++)
         {
             var framesAvailable = _source.AudioFramesAvailable;
-            if (framesAvailable <= 0)
+            var allowedByClock = (int)Math.Floor((_time + _audioLeadSeconds - _audioContentTime) * rate);
+            if (allowedByClock <= 0)
             {
-                return;
+                return totalAccepted;
             }
 
-            var frames = Math.Min(framesAvailable, _pushBuffer.Length / channels);
+            if (framesAvailable <= 0)
+            {
+                // The decoded ring starved while we still wanted to push audio:
+                // grow the lead so slow main-thread frames do not underrun.
+                if (_audioContentTime < _time)
+                {
+                    _audioLeadSeconds = Math.Min(MaxAudioLeadSeconds, _audioLeadSeconds + 0.05);
+                }
+                return totalAccepted;
+            }
+
+            var frames = Math.Min(Math.Min(framesAvailable, allowedByClock), _pushBuffer.Length / channels);
             if (frames <= 0)
             {
-                return;
+                return totalAccepted;
             }
 
             var floats = _source.PeekAudio(_pushBuffer.AsSpan(0, frames * channels));
             if (floats <= 0)
             {
-                return;
+                return totalAccepted;
             }
 
             var offered = floats / channels;
             var consumed = MixAudio(offered, _pushBuffer, 0);
             if (consumed <= 0)
             {
-                return;
+                // 0: the player's resampler is full; negative: no mix callback is
+                // installed (playback not driven by a VideoStreamPlayer).
+                return totalAccepted;
             }
 
             _source.ConsumeAudio(consumed);
+            _audioContentTime += consumed / (double)rate;
+            totalAccepted += consumed;
             if (consumed < offered)
             {
-                return;
+                return totalAccepted;
             }
         }
+
+        return totalAccepted;
+    }
+
+    /// <summary>
+    /// The audio output thread keeps running when the main thread is suspended
+    /// (editor pause/breakpoint, GC or driver stall). It drains the player's
+    /// resampler while the video clock stands still, so the picture falls behind
+    /// the sound after resuming. Advance the video clock by the amount of audio
+    /// that was already consumed during the stall.
+    /// </summary>
+    private void ResyncAfterExternalStall(double wallGap, double step)
+    {
+        if (!_source.HasAudio || _source.AudioChannels <= 0)
+        {
+            return;
+        }
+
+        if (wallGap < ExternalStallThresholdSeconds || _source.IsAudioDrained)
+        {
+            return;
+        }
+
+        // The main loop was suspended for wallGap seconds, but the audio thread
+        // kept consuming the content already pushed into the resampler. Audio can
+        // only have advanced up to that buffered runway, so drive the video clock
+        // from it instead of trusting the (possibly clamped) frame delta.
+        var previousTime = _time - step;
+        var audioRunway = Math.Max(0.0, _audioContentTime - previousTime);
+        var audioAdvanced = Math.Min(wallGap, audioRunway);
+        var desiredTime = previousTime + audioAdvanced;
+        var correction = desiredTime - _time;
+        if (Math.Abs(correction) < 0.02)
+        {
+            return;
+        }
+
+        _time = desiredTime;
+        var sign = correction >= 0.0 ? "+" : "";
+        Log.Print("NovMai FFmpeg: resynced " + sign + (correction * 1000.0).ToString("F0") +
+                 "ms after a main-thread stall (wall gap " + wallGap.ToString("F2") +
+                 "s, delta " + step.ToString("F2") + "s)");
     }
 
     private void UploadFrame(byte[] rgba, int width, int height)

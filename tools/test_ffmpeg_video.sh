@@ -8,7 +8,9 @@
 #
 # Also checks that Godot can instantiate the FFmpegVideoPlayback script with no
 # constructor arguments (the engine does this when it recreates the managed
-# instance for a still-alive native playback object).
+# instance for a still-alive native playback object), and that a simulated
+# main-thread suspension (editor pause/breakpoint) resynchronises audio and
+# video instead of leaving the picture behind the sound.
 #
 # Requires: GODOT_BIN (or GODOT) pointing at the Godot 4.7.2 .NET executable,
 # a system ffmpeg CLI with libx264/libvpx/libopus for fixture generation, and
@@ -38,11 +40,12 @@ mkdir -p "$work"
 sample_dir="$root/assets/charts/sample"
 mp4_fixture="$sample_dir/__ffmpeg_video_probe.mp4"
 webm_fixture="$sample_dir/__ffmpeg_video_probe.webm"
+stall_fixture="$sample_dir/__ffmpeg_video_stall_probe.mp4"
 playback_probe="$sample_dir/__ffmpeg_playback_probe.gd"
 cleanup() {
   # Godot generates a .uid sidecar next to resources it scans; remove those too.
   rm -f "$mp4_fixture" "$mp4_fixture.uid" "$webm_fixture" "$webm_fixture.uid" \
-    "$playback_probe" "$playback_probe.uid"
+    "$stall_fixture" "$stall_fixture.uid" "$playback_probe" "$playback_probe.uid"
 }
 trap cleanup EXIT
 
@@ -57,6 +60,12 @@ echo "Generating video fixtures..."
   -f lavfi -i "sine=frequency=330:sample_rate=48000:duration=2" \
   -c:v libvpx-vp9 -deadline realtime -cpu-used 8 -b:v 300k -c:a libopus -shortest \
   "$webm_fixture"
+# Longer fixture for the stall/resync probe (the stall happens later in playback).
+"$ffmpeg_bin" -hide_banner -loglevel error -y \
+  -f lavfi -i "testsrc2=size=320x240:rate=30:duration=20" \
+  -f lavfi -i "sine=frequency=440:sample_rate=44100:duration=20" \
+  -c:v libx264 -preset ultrafast -pix_fmt yuv420p -c:a aac -b:a 96k -shortest \
+  "$stall_fixture"
 
 export XDG_DATA_HOME="$work/xdg-data"
 export XDG_CONFIG_HOME="$work/xdg-config"
@@ -81,6 +90,7 @@ run_probe() {
   NOVMAI_VIDEO_SELFTEST="$media_path" \
   NOVMAI_VIDEO_LOADER_TEST="$loader_path" \
   NOVMAI_VIDEO_SELFTEST_EXPECT_SECONDS="$expected" \
+  NOVMAI_VIDEO_STALL_PROBE="${stall_probe:-0}" \
   timeout 120 "$godot" --headless --path "$root" --quit-after 2400 2>&1 | tee "$log"
   local status=${PIPESTATUS[0]}
   set -e
@@ -134,5 +144,11 @@ fi
 run_probe "h264_aac_mp4" "$mp4_fixture" "res://assets/charts/sample/__ffmpeg_video_probe.mp4" "2.0"
 run_probe "vp9_opus_webm" "$webm_fixture" "res://assets/charts/sample/__ffmpeg_video_probe.webm" "2.0"
 
+# Simulate an editor pause/breakpoint: the main thread blocks while the audio
+# thread keeps mixing, then playback must resync the picture to the leaked audio.
+stall_probe=1
+run_probe "h264_aac_stall_resync" "$stall_fixture" "res://assets/charts/sample/__ffmpeg_video_stall_probe.mp4" "20"
+stall_probe=0
+
 echo
-echo "OK: FFmpeg video format probe passed (MP4/H.264+AAC and WebM/VP9+Opus)."
+echo "OK: FFmpeg video format probe passed (MP4/H.264+AAC, WebM/VP9+Opus and stall resync)."

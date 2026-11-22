@@ -18,6 +18,9 @@ namespace NovMai.Rendering;
 ///   <item><c>NOVMAI_VIDEO_LOADER_TEST</c>: a second path (usually <c>res://</c>)
 ///     loaded through <see cref="ResourceLoader"/> to verify the registered
 ///     <see cref="FFmpegResourceFormatLoader"/>.</item>
+///   <item><c>NOVMAI_VIDEO_STALL_PROBE=1</c>: blocks the main thread during
+///     playback (simulating an editor pause/breakpoint) and verifies that the
+///     picture is resynchronised to the audio that played while suspended.</item>
 /// </list>
 /// </summary>
 public static class FFmpegVideoSelfTest
@@ -312,9 +315,97 @@ public static class FFmpegVideoSelfTest
             failures += await CheckAudio(host, label, busIndex);
         }
 
+        if (expectAudio && label == "direct stream" &&
+            System.Environment.GetEnvironmentVariable("NOVMAI_VIDEO_STALL_PROBE") == "1")
+        {
+            failures += await ProbeExternalStall(host, player, label);
+        }
+
         player.Stop();
         player.QueueFree();
         await Frames(host, 2);
+        return failures;
+    }
+
+    /// <summary>
+    /// Simulates a main-thread suspension (editor pause/breakpoint, GC stall) by
+    /// blocking the main thread while the audio thread keeps mixing, then reports
+    /// how far the playback position advanced versus the audio that leaked.
+    /// </summary>
+    private static async Task<int> ProbeExternalStall(Node host, VideoStreamPlayer player, string label)
+    {
+        if (_capture == null)
+        {
+            return 0;
+        }
+
+        var mixRate = Math.Max(1, AudioServer.GetMixRate());
+        _capture.ClearBuffer();
+        var positionBefore = player.GetStreamPosition();
+        var usecBefore = Time.GetTicksUsec();
+
+        System.Threading.Thread.Sleep(1200);
+
+        var usecAfterSleep = Time.GetTicksUsec();
+        await Frames(host, 1);
+        var positionAfter = player.GetStreamPosition();
+
+        var capturedFrames = _capture.GetFramesAvailable();
+        var buffer = capturedFrames > 0 ? _capture.GetBuffer(capturedFrames) : Array.Empty<Vector2>();
+
+        // The audio thread keeps mixing during the stall, but emits silence once
+        // the player's resampler is drained. Measure the audible prefix up to the
+        // first sustained silence; later non-silent audio is post-resume playback.
+        var mixRateF = Math.Max(1, mixRate);
+        const int silenceWindow = 512;
+        var silentRun = 0;
+        var audibleFrames = buffer.Length;
+        var peak = 0.0f;
+        for (var index = 0; index < buffer.Length; index++)
+        {
+            var sample = Math.Max(Math.Abs(buffer[index].X), Math.Abs(buffer[index].Y));
+            peak = Math.Max(peak, sample);
+            if (sample <= 0.001f)
+            {
+                silentRun++;
+                if (silentRun >= silenceWindow)
+                {
+                    audibleFrames = index + 1 - silentRun;
+                    break;
+                }
+            }
+            else
+            {
+                silentRun = 0;
+            }
+        }
+
+        var leakedSeconds = audibleFrames / (double)mixRateF;
+        var postResumeSeconds = (Time.GetTicksUsec() - usecAfterSleep) / 1_000_000.0;
+        var wallSeconds = (Time.GetTicksUsec() - usecBefore) / 1_000_000.0;
+        var advanced = positionAfter - positionBefore;
+        var syncError = advanced - leakedSeconds - postResumeSeconds;
+        GD.Print($"NovMai: ffmpeg {label} stall probe: advanced={advanced:F3}s leaked={leakedSeconds:F3}s " +
+                 $"postResume={postResumeSeconds:F3}s syncError={syncError * 1000.0:F0}ms " +
+                 $"peak={peak:F3} wall={wallSeconds:F3}s " +
+                 $"sleep={((usecAfterSleep - usecBefore) / 1_000_000.0):F3}s frames={capturedFrames}");
+
+        var failures = 0;
+        if (leakedSeconds < 0.05)
+        {
+            Fail($"{label} stall audio leak", $"expected buffered audio to drain during the stall, got {leakedSeconds:F3}s");
+            failures++;
+        }
+
+        // After resuming, the video clock should have advanced by the audio that
+        // played during the suspension plus the normal frame delta. Without the
+        // resync it only advances by the latter, leaving the picture behind.
+        if (Math.Abs(syncError) > 0.12)
+        {
+            Fail($"{label} stall resync", $"video advanced {advanced:F3}s vs {leakedSeconds:F3}s leaked audio (+{postResumeSeconds:F3}s normal), sync error {syncError * 1000.0:F0}ms");
+            failures++;
+        }
+
         return failures;
     }
 
@@ -367,7 +458,7 @@ public static class FFmpegVideoSelfTest
         var busIndex = AudioServer.GetBusCount() - 1;
         AudioServer.SetBusName(busIndex, ProbeBusName);
         AudioServer.SetBusSend(busIndex, "Master");
-        _capture = new AudioEffectCapture();
+        _capture = new AudioEffectCapture { BufferLength = 8.0f };
         AudioServer.AddBusEffect(busIndex, _capture);
         return busIndex;
     }

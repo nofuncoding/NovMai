@@ -86,6 +86,9 @@ public sealed unsafe class FFmpegMediaSource : IDisposable
     /// <summary>True once every packet and decoded frame has been consumed.</summary>
     public bool IsDrained => _demuxEof && _videoFrames.Count == 0 && _pendingVideoFrame == null && _audioCount == 0;
 
+    /// <summary>True when the audio decoder reached EOF and all pending PCM was consumed.</summary>
+    public bool IsAudioDrained => _audioCodec == null || (_audioEof && _audioCount == 0);
+
     // ------------------------------------------------------------- opening
 
     /// <summary>
