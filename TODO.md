@@ -38,6 +38,8 @@
 - [ ] Performance
   - [ ] Batching for sprites (Multimesh / RenderingServer)
   - [ ] Hardware-accelerated FFmpeg playing
+    - [ ] Zero-copy GPU texture (~~needs GDExt~~ a bit hacking, see [godot-proposals#13969](https://github.com/godotengine/godot-proposals/issues/13969))
+    - [ ] Multi-threading / Background decode
   - [ ] Multi-threading resource loading
 
 ## Editor
