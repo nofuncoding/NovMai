@@ -25,8 +25,8 @@ public partial class FFmpegVideoPlayback : VideoStreamPlayback
     private const int VideoQueueTarget = 3;
     private const int AudioAheadFrames = 2048;
 
-    private readonly FFmpegMediaSource _source;
-    private readonly string _path;
+    private FFmpegMediaSource _source;
+    private string _path = string.Empty;
     private ImageTexture _texture;
     private Image _image;
     private float[] _pushBuffer = Array.Empty<float>();
@@ -38,6 +38,18 @@ public partial class FFmpegVideoPlayback : VideoStreamPlayback
     private bool _paused;
     private bool _finished;
     private bool _disposed;
+    private bool _lostSourceLogged;
+
+    /// <summary>
+    /// Parameterless constructor required by Godot when it recreates the managed
+    /// instance for a native playback object that is still alive (for example
+    /// after a finalizer/GC race). Such an instance has no decoder state and
+    /// stays inert; <see cref="FFmpegVideoStream"/> always uses the constructor
+    /// below.
+    /// </summary>
+    private FFmpegVideoPlayback()
+    {
+    }
 
     public FFmpegVideoPlayback(Godot.FileAccess file, string path)
     {
@@ -118,13 +130,13 @@ public partial class FFmpegVideoPlayback : VideoStreamPlayback
 
     public override bool _IsPaused() => _paused;
 
-    public override int _GetChannels() => _source.HasAudio ? _source.AudioChannels : 0;
+    public override int _GetChannels() => _source != null && _source.HasAudio ? _source.AudioChannels : 0;
 
-    public override int _GetMixRate() => _source.HasAudio ? _source.AudioSampleRate : 0;
+    public override int _GetMixRate() => _source != null && _source.HasAudio ? _source.AudioSampleRate : 0;
 
     public override void _Play()
     {
-        if (_disposed)
+        if (_disposed || !RequireSource("play"))
         {
             return;
         }
@@ -150,7 +162,7 @@ public partial class FFmpegVideoPlayback : VideoStreamPlayback
         _isPlaying = false;
         _finished = false;
         _time = 0.0;
-        _source.Seek(0.0);
+        _source?.Seek(0.0);
     }
 
     public override void _SetPaused(bool paused)
@@ -160,7 +172,7 @@ public partial class FFmpegVideoPlayback : VideoStreamPlayback
 
     public override void _SetAudioTrack(int idx)
     {
-        if (_disposed)
+        if (_disposed || !RequireSource("audio track switch"))
         {
             return;
         }
@@ -181,7 +193,7 @@ public partial class FFmpegVideoPlayback : VideoStreamPlayback
 
     public override void _Seek(double time)
     {
-        if (_disposed)
+        if (_disposed || !RequireSource("seek"))
         {
             return;
         }
@@ -212,7 +224,7 @@ public partial class FFmpegVideoPlayback : VideoStreamPlayback
 
     public override void _Update(double delta)
     {
-        if (_disposed || !_isPlaying || _paused)
+        if (_disposed || !_isPlaying || _paused || !RequireSource("update"))
         {
             return;
         }
@@ -356,6 +368,27 @@ public partial class FFmpegVideoPlayback : VideoStreamPlayback
         return setting.AsDouble() / 1000.0;
     }
 
+    /// <summary>
+    /// True when this instance owns a decoder. It is false for instances that
+    /// Godot recreated from the parameterless constructor after losing the
+    /// original managed object.
+    /// </summary>
+    private bool RequireSource(string operation)
+    {
+        if (_source != null)
+        {
+            return true;
+        }
+
+        if (!_lostSourceLogged)
+        {
+            _lostSourceLogged = true;
+            Log.Warn($"NovMai FFmpeg: {nameof(FFmpegVideoPlayback)} was recreated by Godot " +
+                     $"without decoder state ({operation}); ignoring playback requests.");
+        }
+        return false;
+    }
+
     public override void _Notification(int what)
     {
         if (what == (int)NotificationPredelete)
@@ -381,5 +414,6 @@ public partial class FFmpegVideoPlayback : VideoStreamPlayback
         _texture = null;
         _image = null;
         _source?.Dispose();
+        _source = null;
     }
 }

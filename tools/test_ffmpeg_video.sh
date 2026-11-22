@@ -6,6 +6,10 @@
 # FFmpegVideoStream (direct path) and through the registered
 # ResourceFormatLoader (res:// path), including texture, seek, pause and audio.
 #
+# Also checks that Godot can instantiate the FFmpegVideoPlayback script with no
+# constructor arguments (the engine does this when it recreates the managed
+# instance for a still-alive native playback object).
+#
 # Requires: GODOT_BIN (or GODOT) pointing at the Godot 4.7.2 .NET executable,
 # a system ffmpeg CLI with libx264/libvpx/libopus for fixture generation, and
 # FFmpeg 9 shared libraries (system or NOVMAI_FFMPEG_ROOT).
@@ -34,9 +38,11 @@ mkdir -p "$work"
 sample_dir="$root/assets/charts/sample"
 mp4_fixture="$sample_dir/__ffmpeg_video_probe.mp4"
 webm_fixture="$sample_dir/__ffmpeg_video_probe.webm"
+playback_probe="$sample_dir/__ffmpeg_playback_probe.gd"
 cleanup() {
   # Godot generates a .uid sidecar next to resources it scans; remove those too.
-  rm -f "$mp4_fixture" "$mp4_fixture.uid" "$webm_fixture" "$webm_fixture.uid"
+  rm -f "$mp4_fixture" "$mp4_fixture.uid" "$webm_fixture" "$webm_fixture.uid" \
+    "$playback_probe" "$playback_probe.uid"
 }
 trap cleanup EXIT
 
@@ -92,6 +98,38 @@ run_probe() {
     exit 1
   fi
 }
+
+# Regression check for the engine attempting a native/script instantiation with
+# no arguments (Godot logs "does not define a parameterless constructor" and
+# drops the script instance when the class has no such constructor).
+cat > "$playback_probe" <<'GDSCRIPT'
+extends SceneTree
+
+func _initialize() -> void:
+	var script: Script = load("res://src/Rendering/FFmpegVideoPlayback.cs")
+	if script == null:
+		push_error("playback script instantiation probe: could not load FFmpegVideoPlayback.cs")
+		quit(1)
+		return
+	var instance: Object = script.new()
+	if instance == null:
+		push_error("playback script instantiation probe: script.new() returned null (missing parameterless constructor?)")
+		quit(1)
+		return
+	print("playback script instantiation ok")
+	quit(0)
+GDSCRIPT
+
+echo
+echo "=== playback script instantiation probe ==="
+set +e
+timeout 120 "$godot" --headless --path "$root" --script "res://assets/charts/sample/__ffmpeg_playback_probe.gd" 2>&1 | tee "$work/playback_new.log"
+probe_status=${PIPESTATUS[0]}
+set -e
+if [[ $probe_status -ne 0 ]] || ! grep -q "playback script instantiation ok" "$work/playback_new.log"; then
+  echo "FAILED: playback script instantiation (missing parameterless constructor?)" >&2
+  exit 1
+fi
 
 run_probe "h264_aac_mp4" "$mp4_fixture" "res://assets/charts/sample/__ffmpeg_video_probe.mp4" "2.0"
 run_probe "vp9_opus_webm" "$webm_fixture" "res://assets/charts/sample/__ffmpeg_video_probe.webm" "2.0"
